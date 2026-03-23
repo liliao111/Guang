@@ -1,0 +1,216 @@
++ ================================================================================
++                     Pace2 光计算模型使用指南
++                     (osimulator API 调用说明)
++ ================================================================================
++ 
++ 一、模型实例路径
++ --------------------------------------------------------------------------------
++ Pace2模型实例位于 osimulator 安装目录下：
++     osimulator/models/pace2/
++ 
++ 可用实例：
++     1. 8x8模式：
++        8X8_4a4w8o_dacenob5.5_power0.01_noise2e-11_1gclock_mean-1.11_std17
++        
++     2. 32x32模式：
++        32X2_4a4w8o_dacenob5.5_power0.02_noise2e-11_1gclock_mean-5.95_std38.3
++ 
++ 实例命名规则：<shape>_<precision>_<dacenob>_<power>_<noise>_<clock>
++     - 4a4w8o：激活uint4，权重int4，输出int8
++ 
++ 
++ 二、加载模型
++ --------------------------------------------------------------------------------
++ import os
++ import torch
++ import osimulator
++ from osimulator.api import load_approach_model
++ 
++ # 获取osimulator安装路径
++ module_path = os.path.abspath(osimulator.__file__)
++ osim_path = os.path.dirname(module_path)
++ 
++ # Pace2 8x8模型实例路径
++ pace2_8x8_path = os.path.join(
++     osim_path, 
++     "models/pace2/8X8_4a4w8o_dacenob5.5_power0.01_noise2e-11_1gclock_mean-1.11_std17"
++ )
++ 
++ # Pace2 32x32模型实例路径
++ pace2_32x32_path = os.path.join(
++     osim_path,
++     "models/pace2/32X2_4a4w8o_dacenob5.5_power0.02_noise2e-11_1gclock_mean-5.95_std38.3"
++ )
++ 
++ # 加载模型（CPU模式）
++ model_8x8 = load_approach_model(device_type="cpu", instances_path=pace2_8x8_path)
++ model_32x32 = load_approach_model(device_type="cpu", instances_path=pace2_32x32_path)
++ 
++ # 重要：如果输入类型是int4，必须设置int2uint=True
++ model_8x8.int2uint = True
++ model_32x32.int2uint = True
++ 
++ 
++ 三、Pace2 8x8模式矩阵乘法
++ --------------------------------------------------------------------------------
++ from osimulator.api import pace2_8x8and16x16mode_matmul
++ 
++ # 输入数据要求：
++ #   - 数据类型：torch.int32
++ #   - x: shape (b, m, k)，输入激活，uint4范围 [0, 15]
++ #   - y: shape (b, k, n)，权重矩阵，int4范围 [-8, 7]
++ 
++ b, m, k, n = 1, 1, 8, 8
++ 
++ # 创建uint4范围的输入（0-15）
++ x = torch.randint(low=0, high=16, size=(b, m, k), dtype=torch.int32)
++ # 创建int4范围的权重（-8到7）
++ y = torch.randint(low=-8, high=8, size=(b, k, n), dtype=torch.int32)
++ 
++ # 执行8x8模式光计算
++ result = pace2_8x8and16x16mode_matmul(
++     x=x,                          # 输入张量
++     y=y,                          # 权重张量
++     pace2_instance=model_8x8,     # 8x8模型实例
++     seed=None,                    # 随机种子（可选）
++     inputType="uint4"             # 输入类型：uint4或int4
++ )
++ 
++ # 输出：torch.int32类型
++ 
++ 
++ 四、Pace2 32x32模式矩阵乘法
++ --------------------------------------------------------------------------------
++ from osimulator.api import pace2_32x32mode_matmul
++ 
++ b, m, k, n = 1, 1, 32, 32
++ 
++ x = torch.randint(low=0, high=16, size=(b, m, k), dtype=torch.int32)
++ y = torch.randint(low=-8, high=8, size=(b, k, n), dtype=torch.int32)
++ 
++ # 执行32x32模式光计算
++ result = pace2_32x32mode_matmul(
++     x=x,                          # 输入张量
++     y=y,                          # 权重张量
++     pace2_instance=model_32x32,   # 32x32模型实例
++     seed=None,                    # 随机种子（可选）
++     inputType="uint4"             # 输入类型
++ )
++ 
++ 
++ 五、使用模型forward()方法（通用方式）
++ --------------------------------------------------------------------------------
++ # 更灵活的调用方式，可设置更多参数
++ 
++ result, latency = model_32x32(
++     x=x,
++     y=y,
++     inputType="uint4",
++     seed=None,
++     gain_scale=1.0,      # TIA增益缩放因子
++     noise_scale=1.0,     # 噪声缩放因子
++     freq_scale=1.0,      # 时钟频率缩放因子
++     adaptive=False,      # 自适应计算（仅gazelle和pace2支持）
++     calc_type="true"     # "true"=光计算, "test"=torch.matmul
++ )
++ 
++ # 返回值：
++ #   - result: 计算结果张量
++ #   - latency: 计算延迟
++ 
++ 
++ 六、动态选择8x8或32x32模式
++ --------------------------------------------------------------------------------
++ def optical_matmul(x, y, model_8x8, model_32x32, inputType="uint4"):
++     """
++     根据通道数动态选择Pace2模式
++     
++     选择规则：
++         - 通道数 <= 16：使用8x8模式
++         - 通道数 > 16：使用32x32模式
++     
++     Args:
++         x: 输入张量，shape (b, m, k)
++         y: 权重张量，shape (b, k, n)
++         model_8x8: Pace2 8x8模型实例
++         model_32x32: Pace2 32x32模型实例
++         inputType: 输入类型，"uint4" 或 "int4"
++     
++     Returns:
++         计算结果张量
++     """
++     from osimulator.api import pace2_8x8and16x16mode_matmul, pace2_32x32mode_matmul
++     
++     k = x.shape[2]  # 输入维度
++     
++     if k <= 16:
++         # 使用8x8模式
++         result = pace2_8x8and16x16mode_matmul(
++             x=x, y=y, 
++             pace2_instance=model_8x8,
++             inputType=inputType
++         )
++     else:
++         # 使用32x32模式
++         result = pace2_32x32mode_matmul(
++             x=x, y=y,
++             pace2_instance=model_32x32,
++             inputType=inputType
++         )
++     
++     return result
++ 
++ 
++ 七、关键参数说明
++ --------------------------------------------------------------------------------
++ 参数名称          说明                              取值范围
++ --------------------------------------------------------------------------------
++ inputType        输入数据类型                       "uint4" 或 "int4"
++ x (输入激活)      输入张量，torch.int32             uint4: [0, 15]
++                                                    int4: [-8, 7]
++ y (权重)          权重张量，torch.int32             int4: [-8, 7]
++ 输出              计算结果，torch.int32             int8范围
++ int2uint         int4转uint4标志                   True/False
++                                                    (int4输入时必须为True)
++ --------------------------------------------------------------------------------
++ 
++ 
++ 八、Pace2计算模式汇总
++ --------------------------------------------------------------------------------
++ 模式            API函数                           适用场景
++ --------------------------------------------------------------------------------
++ 8x8/16x16       pace2_8x8and16x16mode_matmul()    通道数 ≤ 16
++ 32x32           pace2_32x32mode_matmul()          通道数 > 16
++ 64x64           pace2_64x64mode_matmul()          更大维度计算
++ 128x128(稀疏)   pace2_128x128mode_ising()         Ising模型计算
++ --------------------------------------------------------------------------------
++ 
++ 
++ 九、本项目应用场景
++ --------------------------------------------------------------------------------
++ 根据技术方案，本项目学生模型Block2~6的光计算配置：
++ 
++ Block    输入通道    输出通道    Pace2模式
++ --------------------------------------------------------------------------------
++ Block2   32         16         8x8
++ Block3   16         24         8x8/32x32（动态选择）
++ Block4   24         32         32x32
++ Block5   32         64         32x32
++ Block6   64         96         32x32
++ --------------------------------------------------------------------------------
++ 
++ 量化配置：
++     - 输入激活：uint4（Min-Max动态量化，范围[0, 15]）
++     - 权重：int4（对称量化，范围[-8, 7]）
++     - 输出：int8（反量化后为float32）
++ 
++ 
++ 十、注意事项
++ --------------------------------------------------------------------------------
++ 1. 输入数据必须是 torch.int32 类型
++ 2. 使用int4输入时，必须设置 model.int2uint = True
++ 3. 模型实例路径需要根据实际安装位置获取
++ 4. GPU模式需要指定 device_type（如 'sm80', 'sm86', 'sm89', 'sm90'）
++ 5. CPU模式使用 device_type="cpu"
++ 
++ ================================================================================

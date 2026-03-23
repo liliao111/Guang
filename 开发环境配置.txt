@@ -1,0 +1,8 @@
+电脑硬件配置：
+CPU：AMD Ryzen 9 8940HX with Radeon Graphics，16大核32线程；
+GPU：NVIDIA GeForce RTX 5060 Laptop GPU（3328 颗CUDA核心数，572 TOPS的GPU AI算力），8GB显存；
+内存：16GB；
+主硬盘：1TB。
+电脑软件配置：
+Python 3.9.5+ PyTorch 2.1.0+cu121，并且使用WSL2+Dcoker Desktop+Ubuntu22.04.5(Linux操作系统)
+上述的Python 3.9.5+ PyTorch 2.1.0+cu121以及剩下开发所需的一切依赖库都一再conda创建的虚拟环境moca_llm安装完成
